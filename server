@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SERVER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVER_PYTHON="${MAGI_HARNESS_PYTHON:-$SERVER_ROOT/.venv/bin/python}"
+
+if [ ! -x "$SERVER_PYTHON" ]; then
+    SERVER_PYTHON=""
+    for candidate in python3.13 python3.12 python3.11; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            SERVER_PYTHON="$(command -v "$candidate")"
+            break
+        fi
+    done
+fi
+
+if [ -z "$SERVER_PYTHON" ] || ! "$SERVER_PYTHON" -c \
+    'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+    printf 'MAGI Harness requires Python 3.11 or newer.\n' >&2
+    printf 'Run: python3.11 -m venv .venv && .venv/bin/python -m pip install -e .\n' >&2
+    exit 1
+fi
+
+if ! "$SERVER_PYTHON" -c 'import fastapi, httpx, uvicorn' >/dev/null 2>&1; then
+    printf 'MAGI Harness dependencies are not installed for: %s\n' "$SERVER_PYTHON" >&2
+    printf 'Run: %s -m pip install -e .\n' "$SERVER_PYTHON" >&2
+    exit 1
+fi
+
+cd "$SERVER_ROOT"
+exec "$SERVER_PYTHON" -m mgh "$@"

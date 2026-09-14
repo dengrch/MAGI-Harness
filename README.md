@@ -53,12 +53,28 @@ The journal is the recovery source of truth. It does not provide exactly-once gu
 MAGI Harness requires Python 3.11 or newer.
 
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
 .venv/bin/python -m pip install -e .
-.venv/bin/magi-harness
+./server
 ```
 
 Open <http://127.0.0.1:8077>. The default provider is an offline demo and does not consume model credits. Independent checkouts store runtime data in `~/.magi-harness/`; use `--data-dir`, `--db`, or `MGH_DATA_DIR` to choose another location.
+
+`./server` is the repository-local Web server entrypoint. It runs `python -m mgh` from the project virtual environment and forwards command-line options:
+
+```bash
+./server --port 8080
+./server --data-dir /absolute/path/.magi-harness
+MGH_DATA_DIR=/absolute/path/.magi-harness ./server
+```
+
+The equivalent installed entrypoint is `magi-harness`. To use the interactive terminal client instead of the Web UI, add `--cli`:
+
+```bash
+./server --cli
+```
+
+The service binds to loopback only. Provider credentials are stored with user-only permissions and are not returned by the settings API or written to traces.
 
 To use a compatible provider:
 
@@ -67,10 +83,8 @@ export LLM_BINDING='openai'
 export LLM_BINDING_HOST='https://provider.example/v1'
 export LLM_BINDING_API_KEY='your-key'
 export LLM_MODEL='your-model'
-magi-harness
+./server
 ```
-
-The service binds to loopback only. Provider credentials are stored with user-only permissions and are not returned by the settings API or written to traces.
 
 ## Python embedding
 
@@ -112,13 +126,13 @@ More detailed contracts are documented in [Architecture](docs/architecture.md), 
 ## Verification
 
 ```bash
-python -m pip install -e '.[dev]'
-python -m pytest
-python -m ruff check .
-npm install
-npm test
-npm run check
-python -m mgh.arena --output /tmp/magi-arena
+.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pytest
+.venv/bin/python -m ruff check .
+bun install --frozen-lockfile
+bun test
+bun run check
+.venv/bin/python -m mgh.arena --output /tmp/magi-arena
 ```
 
 The automated suite covers context projection, recovery prefixes, retry limits, queues, tool uncertainty, compaction, parallel read tools, HTTP behavior, and static UI interactions. It does not replace real-provider compatibility tests or browser-based visual validation.
