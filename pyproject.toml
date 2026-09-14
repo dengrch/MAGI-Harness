@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magi-harness"
+version = "0.1.0"
+description = "A durable, observable Python agent runtime with four-zone context management and exact-source recovery."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.108", "uvicorn>=0.27", "httpx>=0.28"]
+
+[project.optional-dependencies]
+tokenizer = ["tiktoken>=0.7"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.8"]
+
+[project.scripts]
+magi-harness = "mgh.__main__:main"
+
+[tool.setuptools.package-data]
+mgh = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+include = ["mgh*"]

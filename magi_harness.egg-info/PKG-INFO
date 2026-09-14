@@ -1,0 +1,231 @@
+Metadata-Version: 2.4
+Name: magi-harness
+Version: 0.1.0
+Summary: A small Python harness for observable four-zone context
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.108
+Requires-Dist: uvicorn>=0.27
+Requires-Dist: httpx>=0.28
+Provides-Extra: tokenizer
+Requires-Dist: tiktoken>=0.7; extra == "tokenizer"
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"
+Requires-Dist: ruff>=0.8; extra == "dev"
+
+# MAGI Harness
+
+[当前架构与项目进展](docs/architecture.md) · [Durable 验收边界](docs/durable-coverage.md)
+
+一个本地优先、可恢复、可观测的 Python Agent 运行时。它把模型执行、工具调用、持久化日志与上下文投影拆成明确边界：主页面负责对话，Trace 页面展示每次 Provider 调用实际看到的四区上下文、原文引用、请求、工具结果与用量。
+
+从零实现，未复制 Waku 的应用壳，也不依赖 DSH / Pi 运行时。设计参考 Pi 的简单执行循环、DSH 的对话与 trace 分工；配色沿用 MAGI Memo 的视觉语言。无 TypeScript、无前端构建、无插件容器。
+
+## 与 Pi 的关系
+
+这不是 Pi v1 的 Python 移植版。早期实现曾对照母仓中的 Pi agent loop 和 AgentHarness 设计稿：模型流式响应、工具批次、工具结果进入下一次模型调用，以及调用边界的 context transform 采用同一类控制流；持久化部分吸收 durable admission、single-writer、append-only record 和副作用不盲目重放原则。拆仓后以本项目文档、代码和测试为准，不依赖那些参考源码运行。
+
+已实现单线 operation journal、只读恢复与显式 resume、持久化队列、工具重放保护、manual drive、四个 hook 点、被动 watch 和可恢复语义 rebase。未实现完整 Pi v2 的 tree/lanes、导航事务、并行工具批次、全部 hook/event 协议或多 backend parity；不能宣称与完整 Pi AgentHarness 等价。逐项边界见 [Durable 验收清单](docs/durable-coverage.md)。
+
+## 核心能力
+
+- 可恢复的单线 Agent loop：输入先落盘，模型请求与工具 intent/result 形成 append-only journal，崩溃后只读发现并显式 resume。
+- Four-Zone Context：Stable / Stubs / Cold / Hot 固定编译，完整原文以内容寻址 source 保存并可按需 page-in。
+- 工作区工具：`read`、`glob`、`grep`、`write`、`edit`、`bash` 与 `calculate`，带路径边界、read-before-edit、授权和重放策略。
+- Provider 与宿主：支持 Chat Completions 兼容流式接口、离线 demo、Web、CLI 和 Python 嵌入。
+- 可观测与可评估：保存真实请求快照、流式 delta、usage、四区迁移和工具轨迹，并附带离线 Context Arena。
+
+## 快速启动
+
+独立 checkout 中：
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -e .
+.venv/bin/magi-harness
+```
+
+打开 <http://127.0.0.1:8077>。默认是明确标识的离线演示，不消耗模型额度。独立 checkout 与安装包把运行数据保存在 `~/.magi-harness/`；可通过 `--data-dir`、`--db` 或 `MGH_DATA_DIR` 修改。
+
+仍位于 MAGI Memo 母仓开发时，也可以直接运行：
+
+在 MAGI Memo 仓库根目录，使用已有虚拟环境：
+
+```bash
+PYTHONPATH=sages/magi-harness .venv/bin/python -m mgh
+```
+
+若母仓已有 `sages/mgh-test/`，Harness 会继续使用它，避免现有会话在拆仓前因默认路径改变而不可见。
+
+- 基础工具与 DSH 核心命名对齐：`read`、`glob`、`grep`、`write`、`edit`、`bash`，另保留 `calculate` 与 `context_read`。
+- 文件工具被限制在会话选择的真实工作区；覆盖/编辑遵守 read-before-edit。写入可按会话设为询问、允许编辑或只读，`bash` 始终要求一次性批准。
+- 默认每 3 个闭合 Turn，在下一轮请求前迁移一次。第 4 轮出现 Cold，第 7 轮同时出现 Stubs / Cold / Hot。
+- 新对话可将 Stage 轮数设为 1，默认保留最近 1 Turn，第四轮即可看全四区。
+- Trace 中点击引用可查看原文；演示模型使用 `/read ctx://...` 发起临时 page-in。
+- 重启自动恢复对话、Trace 和四区状态。
+
+CLI 使用 `magi-harness --cli`；恢复指定会话可加 `--session SESSION_ID`。
+
+### 真实模型
+
+首版支持 Chat Completions 兼容接口的 SSE、工具调用、`reasoning_content` 和 usage。Web 设置支持 OpenAI-compatible、Ollama 与 llama.cpp；地址填写到 API 根路径，例如服务的 `/v1`，调用时追加 `/chat/completions`。
+
+```bash
+export LLM_BINDING='openai'
+export LLM_BINDING_HOST='https://open.bigmodel.cn/api/paas/v4'
+export LLM_BINDING_API_KEY='your-key'
+export LLM_MODEL='glm-4.7-flash'
+magi-harness
+```
+
+模型由服务进程配置，不由浏览器保存密钥。兼容 Provider 必须支持 `stream_options.include_usage`、`max_tokens` 和所选模型的工具调用；其他协议不静默降级。只完成 mock HTTP 验证，本次未使用真实凭据请求在线模型。
+
+- Ollama 默认地址：`http://127.0.0.1:11434/v1`。
+- llama.cpp 默认地址：`http://127.0.0.1:8080/v1`；Harness 会显式发送 `cache_prompt=true`。
+- Provider 返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，Trace 展示缓存读取；未返回时显示 `—`，不会把本地公共前缀估算伪装成缓存命中。
+- 设置页修改写入数据目录下的 `settings.json`（权限 `0600`），API key 不通过设置读取接口或 Trace 回显。环境变量用于没有设置文件时的初始配置。
+
+## Python 嵌入
+
+```python
+from mgh import Harness, ContextConfig
+from mgh.memo import workspace_store, memo_tools
+from mgh.provider import CompatibleProvider
+
+# handle 是宿主通过 MagiAPI.open() 获得的已打开 MagiHandle。
+store = workspace_store('/path/to/magi-workspace', 'workspace-id')
+harness = Harness(
+    store,
+    CompatibleProvider(model, base_url, api_key),
+    tools=memo_tools(handle),
+)
+with store.writer():
+    harness.recover()
+    session = harness.create(ContextConfig())
+    result = await harness.run(session, '从已有记忆中找出这个项目的约束')
+store.close()
+```
+
+`memory_search` 直接调用 `await handle.search(..., only_need_context=True)`；现有 handle 的生命周期检查继续生效，不走 Runtime REST。此示例只展示嵌入片段，`model/base_url/api_key/handle` 由宿主提供，宿主负责关闭 handle。自定义工具使用 `Tool(name, description, parameters, async_callable)` 显式注册。
+
+原始上下文暂存 workspace 的 `contexts/harness.db`，不会默认转成 Episode 或抽取 Atom。该布局是适配层的临时约定，尚未成为 MagiRuntime 的正式生命周期能力。参见 [Memo 接口提案](docs/memo-context-contract.md)。
+
+当前边界采用 Harness-first：Harness 拥有短期 Session journal、exact sources、Four-Zone projection、page-in 与恢复语义；Memo 拥有 Episode/Atom、图检索和显式长期记忆晋升。未来可以让 Memo workspace 提供物理 Context backend，但不会把 Four-Zone 策略下沉成 Memo query mode。
+
+## 模块
+
+| 模块 | 单一职责 |
+| --- | --- |
+| `store.py` | SQLite session、append-only event、content-addressed source |
+| `context.py` | 确定性编译、预算、批量 stage 迁移 |
+| `runtime.py` | 会话准入、工具授权、Turn 收尾与公开 `Harness` API |
+| `durable.py` / `reducer.py` | 异步模型 / 工具循环、operation 恢复、队列、重放决策与日志前缀校验 |
+| `effects.py` / `hooks.py` | 可控副作用门、有限 hook 与被动订阅 |
+| `compaction.py` | provider 语义摘要与原文归档根的原子提交 |
+| `arena.py` / `tokenizer.py` | 四策略离线评估与可选 tokenizer 估算 |
+| `provider.py` | 离线演示与一个真实兼容流式协议 |
+| `tools.py` | 工作区边界、read-before-edit 与 DSH 风格基础工具表 |
+| `memo.py` | workspace 存储约定与现有 MagiHandle 直连 |
+| `web.py` | 本地 HTTP 宿主、对话 / Trace 静态页面 |
+| `__main__.py` | CLI / Web 启动 |
+
+执行路径只有：接受并保存输入 → 编译四区 → 保存真实请求 → 流式模型响应 → 保存响应 → 执行并保存工具结果 → 再次编译；Turn 闭合后等待下次边界迁移。
+
+## 上下文与恢复约定
+
+- 固定请求顺序为 **Stable → Stubs → Cold → Hot**；工具 schema 确定排序。
+- Stage 内已编译消息保持不变，仅尾部增长；迁移只操作已闭合 Turn，不拆当前工具调用。
+- Cold 保留用户 / assistant 文本与工具调用参数，工具结果和 reasoning 以 source refs 保存。超过 4,096 字符的工具结果在 Hot 中投影为预览与引用，原文不变。
+- Stub 是前 240 字符的**导航摘录**，明确 `excerpt=true`，不是语义摘要。包含 `source_refs` / `dependency_refs` / `supersedes` / hash。
+- page-in 只在消息事件中记录引用，编译时载入原文；同 Turn 重复读取不复制正文；stage 迁移时移除正文、保留 `loaded_from`。读取不会触发 Memo 写入。模型自己复述的内容仍是新 assistant 原文，不假装能自动判定知识新旧。
+- 默认预算使用 `UTF-8 bytes + message framing` 代理单位，**不是模型 tokenizer**。可安装 `magi-harness[tokenizer]` 并设置 `ContextConfig(tokenizer="cl100k_base")`，获得序列化 token + framing 估算及 token 前缀；仍不是 provider 的精确计费输入。真实 token / cache 仅展示 Provider 返回值，未知不当作零。
+- 请求前预算检查失败会尝试迁移已完成 Turn；仍超限则明确终止、保留所有原文。Four-Zone 支持显式 `compact()` 语义 rebase，原文仍可通过 archive root 寻址；摘要请求本身也有预算，不承诺无限历史自动压缩。
+- 服务进程持有数据库文件锁；同 Session 并发输入被拒绝。多个 Session 可异步运行；不支持多 worker。POSIX 本地部署。
+- 新 operation 重启后只读恢复为 suspended，显式 resume 或 abort；关闭 Harness 不等于取消 operation。仅旧版本没有 operation_started 的未闭合 Turn 按 interrupted 迁移。工具 intent 已落盘但结果未知时，只有持久化和当前注册均声明 safe 才重放，其他工具补“结果未知”；不承诺 exactly-once。流式 delta 持久化，截断响应不会被误标为正常完成。
+- Trace 保存完整对话内容，但不保存认证 header 或任意外部异常正文。服务只绑定 loopback，没有多用户认证；不能直接当公网服务部署。
+
+## 验证
+
+独立仓库中运行：
+
+```bash
+python -m pip install -e '.[dev]'
+python -m pytest
+python -m ruff check .
+npm install
+npm test
+npm run check
+python -m mgh.arena --output /tmp/magi-arena
+```
+
+在 MAGI Memo 母仓中也可复用已有环境：
+
+```bash
+./scripts/test.sh sages/magi-harness/tests
+.venv/bin/ruff check sages/magi-harness
+```
+
+它有自己的 pytest 配置，不接受母仓测试树专用的 `--test-workers` 参数。
+
+基础 Context Arena 已可运行，包含 Full History、Sliding Window、Traditional Compaction（明确为 tail excerpt）和 Four-Zone。4 个 fixture × 4 种策略，导出 JSON、Markdown、逐次完整 trace，并提供失败退出码：
+
+```bash
+python -m mgh.arena --output /tmp/magi-arena
+```
+
+Gate 检查 source 完整性、工具配对、预算，以及 Full History/Four-Zone 的事实回收。脚本 provider 只读真实请求，不读取 ground truth。这是机制评估，不是真实 LLM 质量排名；短 fixture 中 Four-Zone 的元数据开销高于 Full History，尚无节省 token 或费用的证据。传统压缩的语义摘要公平对照、在线模型多 seed 评估和 Memory Arena 尚未完成。
+
+
+## 核心机制补充：保留 Hot 尾部与单线轨迹
+
+每 n 个新完成的 Turn 批量切换：旧 Cold → Stubs；Hot 中较早的完整 Turn → Cold；**最近 k 个完整 Turn 继续留在 Hot**，当前未闭合 Turn 也始终保留。默认 n=3、k=1（`keep_hot_turns` 可在 Python 配置中调整）。保留的 Turn 不计入下一周期的新完成数量。预算紧张也不会偷偷驱逐这段连续工作集，无法满足预算时明确报错。
+
+Canonical 内容在 Turn 闭合时提前准备、持久化，切换不额外请求模型；切换仍有本地读取、序列化和事务开销，不宣称物理意义上的零耗时。完整原文始终可寻址恢复；上下文投影缩小不等于原文被删除。任务无关内容的定向筛选留待策略升级，当前按时间成批迁移，不假装已有相关性判断。
+
+Trace 只保留一条按 Turn 时间排序的轨迹：顶部显示最近请求的四区概览；对象在原时间位置显示当前的 Hot / Cold / Stubs 形态。切换只在 Turn 间用轻量标记呈现，悬停解释、点击展开具体迁移和保留范围；每次调用的历史快照可按需打开。切换表示修改点之后的前缀需要重建，Stable 等未变前缀仍可能复用，不等于整个 Provider 缓存被清空。
+
+## WebUI interaction refresh
+
+The static client uses the neutral MAGI Memo / Casper palette, translucent panels,
+shared control sizes, and a responsive conversation / trajectory layout. No frontend
+build or runtime JavaScript dependency is required.
+
+- Workspace navigation: title/path search, persistent collapsed groups, five-session
+  previews, and a recent-directory picker with manual absolute-path entry. The picker
+  selects working directories; it does not browse their file contents.
+- Conversation: incremental assistant output, escaped basic Markdown and fenced code,
+  auto-growing input, per-session in-memory drafts and attachments, scroll following
+  that pauses while reading older messages, and a return-to-latest button.
+- Trajectory: DSH-style Turn / Step hierarchy. Each provider request begins one Step;
+  reasoning, assistant output, and tool calls/results belong to it. Context composition
+  appears on the Step separator and in its tabbed inspector alongside cache metrics.
+  Switch transitions retain their actual chronological position. The old top context
+  overview and individual context-block event rows are removed. A separate execution
+  timeline shows User / Agent / Tool timings, measured TTFT, point selection, and
+  overlapping-range selection. System messages and tool schemas come from actual
+  request snapshots and appear before the first Turn or when their definitions change.
+  The Switch overview contains only stage numbers, trigger, and migration counts.
+  Traceline gives every operation equal width by default; Timeline projects recorded
+  duration and TTFT. Both support point selection, drag selection, and wheel zoom.
+- Settings: general/model/context navigation, system appearance updates, recent workspace
+  prompts, and read-before-write protection for `MAGI.md`. Use Cmd/Ctrl + comma to open.
+- Drafts survive session switches in the current page, but not a page reload. Markdown
+  deliberately supports only headings, bold, inline code, and fenced code; raw HTML is escaped.
+
+Browser-free UI regression checks use Node's test runner and jsdom (a development-only
+dependency). From this directory, install development dependencies with `npm install`,
+then run `npm test` and `npm run check`. In this monorepo, an existing DSH installation
+can be reused without installing anything:
+
+```bash
+# Run from the repository root.
+NODE_PATH="$PWD/sages/dsh/node_modules" node --test sages/magi-harness/tests/ui.test.cjs
+node --check sages/magi-harness/mgh/static/app.js
+./scripts/test.sh sages/magi-harness/tests
+```
+
+The latest refresh passed 31 DOM/interaction regressions. Backend durability and
+evaluation regressions are included in the pytest suite; see the acceptance checklist.
+No real browser was launched; visual layout, glass compositing, native selects, and
+narrow-screen appearance still require manual inspection.

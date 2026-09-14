@@ -1,0 +1,2 @@
+[console_scripts]
+magi-harness = mgh.__main__:main

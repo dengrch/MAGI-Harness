@@ -1,0 +1,11 @@
+fastapi>=0.108
+uvicorn>=0.27
+httpx>=0.28
+
+[dev]
+pytest>=8
+pytest-asyncio>=0.24
+ruff>=0.8
+
+[tokenizer]
+tiktoken>=0.7
