@@ -20,7 +20,7 @@ def main():
     parser.add_argument("--data-dir", default=str(default_data_dir()))
     parser.add_argument("--db")
     parser.add_argument("--workspace", default="default")
-    parser.add_argument("--port", type=int, default=8077)
+    parser.add_argument("--port", type=int, default=34914)
     parser.add_argument(
         "--provider",
         choices=["auto", "demo", "openai", "ollama", "llamacpp", "compatible"],

@@ -58,7 +58,7 @@ python3.11 -m venv .venv
 ./server
 ```
 
-Open <http://127.0.0.1:8077>. The default provider is an offline demo and does not consume model credits. Independent checkouts store runtime data in `~/.magi-harness/`; use `--data-dir`, `--db`, or `MGH_DATA_DIR` to choose another location.
+Open <http://127.0.0.1:34914>. The default provider is an offline demo and does not consume model credits. Independent checkouts store runtime data in `~/.magi-harness/`; use `--data-dir`, `--db`, or `MGH_DATA_DIR` to choose another location.
 
 `./server` is the repository-local Web server entrypoint. It runs `python -m mgh` from the project virtual environment and forwards command-line options:
 
